@@ -66,7 +66,7 @@ This is a Telegram Bot written in Python for mirroring files on the Internet to 
 
 - Clone this repo:
 ```
-git clone https://github.com/anasty17/mirror-leech-telegram-bot mirrorbot/ && cd mirrorbot
+git clone https://github.com/knownrdx/spyleech && cd spyleech
 ```
 - For Debian based distros
 ```
