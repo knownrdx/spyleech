@@ -8,6 +8,7 @@ from threading import RLock
 
 from bot import app, DOWNLOAD_DIR, AS_DOCUMENT, AS_DOC_USERS, AS_MEDIA_USERS, CUSTOM_FILENAME
 from bot.helper.ext_utils.fs_utils import take_ss, get_media_info, get_video_resolution, get_path_size
+from bot.helper.ext_utils.bot_utils import get_readable_file_size
 
 LOGGER = logging.getLogger(__name__)
 logging.getLogger("pyrogram").setLevel(logging.ERROR)
@@ -28,7 +29,7 @@ class TgUploader:
         self.__is_cancelled = False
         self.__as_doc = AS_DOCUMENT
         self.__thumb = f"Thumbnails/{listener.message.from_user.id}.jpg"
-        self.__sent_msg = ''
+        self.__sent_msg = app.get_messages(self.__listener.message.chat.id, self.__listener.uid)
         self.__msgs_dict = {}
         self.__corrupted = 0
         self.__resource_lock = RLock()
@@ -36,7 +37,7 @@ class TgUploader:
 
     def upload(self):
         path = f"{DOWNLOAD_DIR}{self.__listener.uid}"
-        size = get_path_size(path)
+        size = get_readable_file_size(get_path_size(path))
         for dirpath, subdir, files in sorted(walk(path)):
             for file_ in sorted(files):
                 if self.__is_cancelled:
@@ -58,13 +59,9 @@ class TgUploader:
         if len(self.__msgs_dict) <= self.__corrupted:
             return self.__listener.onUploadError('Files Corrupted. Check logs')
         LOGGER.info(f"Leech Completed: {self.name}")
-        self.__listener.onUploadComplete(self.name, size, self.__msgs_dict, None, self.__corrupted)
+        self.__listener.onUploadComplete(None, size, self.__msgs_dict, None, self.__corrupted, self.name)
 
     def __upload_file(self, up_path, file_, dirpath):
-        if self.__sent_msg == '':
-            self.__sent_msg = app.get_messages(self.__listener.message.chat.id, self.__listener.uid)
-        else:
-            self.__sent_msg = app.get_messages(self.__sent_msg.chat.id, self.__sent_msg.message_id)
         if CUSTOM_FILENAME is not None:
             cap_mono = f"{CUSTOM_FILENAME} <code>{file_}</code>"
             file_ = f"{CUSTOM_FILENAME} {file_}"
@@ -81,7 +78,7 @@ class TgUploader:
                 if file_.upper().endswith(VIDEO_SUFFIXES):
                     duration = get_media_info(up_path)[0]
                     if thumb is None:
-                        thumb = take_ss(up_path, duration)
+                        thumb = take_ss(up_path)
                         if self.__is_cancelled:
                             if self.__thumb is None and thumb is not None and ospath.lexists(thumb):
                                 osremove(thumb)

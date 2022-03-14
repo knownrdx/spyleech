@@ -1,7 +1,7 @@
-from os import remove as osremove, path as ospath, mkdir, walk, listdir, rmdir
+from os import remove as osremove, path as ospath, mkdir, walk, listdir, rmdir, makedirs
 from sys import exit as sysexit
 from json import loads as jsnloads
-from shutil import rmtree
+from shutil import rmtree, disk_usage
 from PIL import Image
 from magic import Magic
 from subprocess import run as srun, check_output
@@ -9,7 +9,7 @@ from time import time
 from math import ceil
 
 from .exceptions import NotSupportedExtractionArchive
-from bot import aria2, LOGGER, DOWNLOAD_DIR, get_client, TG_SPLIT_SIZE, EQUAL_SPLITS
+from bot import aria2, LOGGER, DOWNLOAD_DIR, get_client, TG_SPLIT_SIZE, EQUAL_SPLITS, STORAGE_THRESHOLD
 
 VIDEO_SUFFIXES = ("M4V", "MP4", "MOV", "FLV", "WMV", "3GP", "MPG", "WEBM", "MKV", "AVI")
 
@@ -17,21 +17,24 @@ def clean_download(path: str):
     if ospath.exists(path):
         LOGGER.info(f"Cleaning Download: {path}")
         try:
-            rmtree(path, ignore_errors=True)
+            rmtree(path)
         except FileNotFoundError:
             pass
 
 def start_cleanup():
     try:
-        rmtree(DOWNLOAD_DIR, ignore_errors=True)
+        rmtree(DOWNLOAD_DIR)
     except FileNotFoundError:
         pass
+    makedirs(DOWNLOAD_DIR)
 
 def clean_all():
     aria2.remove_all(True)
-    get_client().torrents_delete(torrent_hashes="all", delete_files=True)
+    qbc = get_client()
+    qbc.torrents_delete(torrent_hashes="all", delete_files=True)
+    qbc.app_shutdown()
     try:
-        rmtree(DOWNLOAD_DIR, ignore_errors=True)
+        rmtree(DOWNLOAD_DIR)
     except FileNotFoundError:
         pass
 
@@ -45,19 +48,19 @@ def exit_clean_up(signal, frame):
         sysexit(1)
 
 def clean_unwanted(path: str):
-    LOGGER.info(f"Cleaning unwanted files/folder: {path}")
+    LOGGER.info(f"Cleaning unwanted files/folders: {path}")
     for dirpath, subdir, files in walk(path, topdown=False):
         for filee in files:
             if filee.endswith(".!qB") or filee.endswith('.parts') and filee.startswith('.'):
                 osremove(ospath.join(dirpath, filee))
         for folder in subdir:
             if folder == ".unwanted":
-                rmtree(ospath.join(dirpath, folder), ignore_errors=True)
+                rmtree(ospath.join(dirpath, folder))
     for dirpath, subdir, files in walk(path, topdown=False):
         if not listdir(dirpath):
             rmdir(dirpath)
 
-def get_path_size(path):
+def get_path_size(path: str):
     if ospath.isfile(path):
         return ospath.getsize(path)
     total_size = 0
@@ -66,6 +69,20 @@ def get_path_size(path):
             abs_path = ospath.join(root, f)
             total_size += ospath.getsize(abs_path)
     return total_size
+
+def check_storage_threshold(size: int, arch=False, alloc=False):
+    if not alloc:
+        if not arch:
+            if disk_usage(DOWNLOAD_DIR).free - size < STORAGE_THRESHOLD * 1024**3:
+                return False
+        elif disk_usage(DOWNLOAD_DIR).free - (size * 2) < STORAGE_THRESHOLD * 1024**3:
+            return False
+    elif not arch:
+        if disk_usage(DOWNLOAD_DIR).free < STORAGE_THRESHOLD * 1024**3:
+            return False
+    elif disk_usage(DOWNLOAD_DIR).free - size < STORAGE_THRESHOLD * 1024**3:
+        return False
+    return True
 
 def get_base_name(orig_path: str):
     if orig_path.endswith(".tar.bz2"):
@@ -151,11 +168,12 @@ def get_mime_type(file_path):
     mime_type = mime_type or "text/plain"
     return mime_type
 
-def take_ss(video_file, duration):
+def take_ss(video_file):
     des_dir = 'Thumbnails'
     if not ospath.exists(des_dir):
         mkdir(des_dir)
     des_dir = ospath.join(des_dir, f"{time()}.jpg")
+    duration = get_media_info(video_file)[0]
     if duration == 0:
         duration = 3
     duration = duration // 2
@@ -173,7 +191,7 @@ def take_ss(video_file, duration):
 def split(path, size, file_, dirpath, split_size, start_time=0, i=1, inLoop=False):
     parts = ceil(size/TG_SPLIT_SIZE)
     if EQUAL_SPLITS and not inLoop:
-        split_size = ceil(size/parts)
+        split_size = ceil(size/parts) + 1000
     if file_.upper().endswith(VIDEO_SUFFIXES):
         base_name, extension = ospath.splitext(file_)
         split_size = split_size - 2500000
